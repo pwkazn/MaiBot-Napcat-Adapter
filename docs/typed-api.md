@@ -14,6 +14,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `adapter.napcat.action.call` | `action_name`、`params=None` | 任意 action | 由 `action_name` 决定 | 无 | 适配器通用入口；`result` 为 NapCat 原始响应字典。 |
 | `adapter.napcat.action.call_data` | `action_name`、`params=None` | 任意 action | 由 `action_name` 决定 | 无 | 适配器通用入口；`result` 直接返回 NapCat 响应里的 `data`。 |
+| `adapter.message.get` | `message_id` | `get_msg` | `message_id` | 无 | 返回 Host 标准 `MessageDict`，保留结构化消息和媒体；仅平台明确告知消息不存在或已撤回时返回 `None`。连接、超时、格式错误及缺少真实聊天归属时抛错，不按调用方上下文填造归属。 |
 
 ## System
 

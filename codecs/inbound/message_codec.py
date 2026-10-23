@@ -250,7 +250,7 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
                 continue
 
             if segment_type == "reply":
-                if reply_segment := await self._build_reply_segment(segment_data):
+                if reply_segment := self._build_reply_segment(segment_data):
                     converted_segments.append(reply_segment)
                 continue
 
@@ -340,8 +340,8 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
         """
         return {"type": "text", "data": text}
 
-    async def _build_reply_segment(self, segment_data: Mapping[str, Any]) -> Optional[NapCatSegment]:
-        """构造回复消息段。
+    def _build_reply_segment(self, segment_data: Mapping[str, Any]) -> Optional[NapCatSegment]:
+        """构造仅携带目标消息 ID 的回复段，由 Host 统一解析被引用的消息。
 
         Args:
             segment_data: OneBot ``reply`` 段的 ``data`` 字典。
@@ -353,38 +353,7 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
         if not target_message_id:
             return None
 
-        message_detail = await self._query_service.get_message_detail(target_message_id)
-        reply_payload: Dict[str, Any] = {"target_message_id": target_message_id}
-        if message_detail is not None:
-            sender = message_detail.get("sender", {})
-            if not isinstance(sender, Mapping):
-                sender = {}
-            reply_payload["target_message_content"] = await self._build_reply_preview_text(message_detail)
-            reply_payload["target_message_sender_id"] = (
-                str(message_detail.get("user_id") or sender.get("user_id") or "").strip() or None
-            )
-            reply_payload["target_message_sender_nickname"] = str(sender.get("nickname") or "").strip() or None
-            reply_payload["target_message_sender_cardname"] = str(sender.get("card") or "").strip() or None
-
-        return {"type": "reply", "data": reply_payload}
-
-    async def _build_reply_preview_text(self, message_detail: NapCatPayload) -> Optional[str]:
-        """为回复引用构造结构化消息预览文本。
-
-        Args:
-            message_detail: ``get_msg`` 返回的消息详情。
-
-        Returns:
-            Optional[str]: 基于结构化消息段生成的预览文本；无法生成时返回 ``None``。
-        """
-        try:
-            reply_segments, _ = await self.convert_segments(message_detail, "")
-        except ValueError:
-            return None
-
-        if not reply_segments:
-            return None
-        return self.build_plain_text(reply_segments)
+        return {"type": "reply", "data": {"target_message_id": target_message_id}}
 
     async def _build_image_like_segment(
         self,

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Dict, Mapping, Optional, cast
 
-from maibot_sdk import MaiBotPlugin, MessageGateway, PluginConfigBase, Tool
+from maibot_sdk import API, MaiBotPlugin, MessageGateway, PluginConfigBase, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
 from .apis import (
@@ -25,6 +25,7 @@ from .config import NapCatPluginSettings
 from .constants import NAPCAT_GATEWAY_NAME, PRIVATE_CHAT_TOOL_BYPASS_SECONDS
 from .runtime import NapCatEventRouter, NapCatRuntimeBuilder, NapCatRuntimeBundle
 from .services import NapCatActionService, NapCatQueryService
+from .services.action_service import NapCatActionError
 
 
 class NapCatAdapterPlugin(
@@ -51,6 +52,64 @@ class NapCatAdapterPlugin(
         """在插件加载时根据配置决定是否启动连接。"""
         await self._sync_private_chat_tool_component_state()
         await self._restart_connection_if_needed()
+
+    @API("adapter.message.get", description="按消息 ID 获取标准消息", version="1", public=True)
+    async def api_get_message(self, message_id: str) -> Optional[Dict[str, Any]]:
+        """按 ID 获取 Host 标准消息，不重新注入聊天流。
+
+        Args:
+            message_id: 被引用消息的平台消息 ID。
+
+        Returns:
+            Optional[Dict[str, Any]]: 标准 MessageDict；平台明确告知消息不存在或已撤回时返回 ``None``。
+
+        Raises:
+            RuntimeError: 连接、传输或其他平台动作失败时抛出。
+            ValueError: 平台返回的消息身份、发送者或聊天归属不完整时抛出。
+        """
+        normalized_id = self._normalize_non_empty_string(message_id, "message_id")
+        runtime = self._require_runtime_bundle()
+        try:
+            detail = await runtime.query_service.call_action_data("get_msg", {"message_id": normalized_id})
+        except NapCatActionError as exc:
+            if exc.action_name == "get_msg" and exc.wording in {"消息不存在", "消息不存在或已被撤回"}:
+                return None
+            raise
+        if not isinstance(detail, Mapping):
+            raise ValueError("NapCat 消息详情必须是对象")
+
+        # 查询结果必须保留真实身份，不能让入站编码器生成新 ID 或默认成私聊。
+        if str(detail.get("message_id") or "").strip() != normalized_id:
+            raise ValueError("NapCat 返回的消息 ID 与请求不一致")
+        message_type = detail.get("message_type")
+        if message_type not in {"group", "private"}:
+            raise ValueError("NapCat 消息详情缺少有效的 message_type")
+        if message_type == "group" and not str(detail.get("group_id") or "").strip():
+            raise ValueError("NapCat 群消息详情缺少 group_id")
+        if not isinstance(detail.get("time"), (int, float)):
+            raise ValueError("NapCat 消息详情缺少有效的发送时间")
+
+        sender = detail.get("sender")
+        if not isinstance(sender, Mapping):
+            raise ValueError("NapCat 消息详情缺少发送者信息")
+        sender_user_id = str(sender.get("user_id") or detail.get("user_id") or "").strip()
+        if not sender_user_id:
+            raise ValueError("NapCat 消息详情缺少发送者 ID")
+        self_id = str(detail.get("self_id") or runtime.runtime_state.account_id).strip()
+        if not self_id:
+            raise ValueError("NapCat 消息详情缺少机器人账号，且运行时没有已确认的账号")
+
+        # 自己发出的私聊，发送者不是聊天对端；只能使用平台返回的真实目标。
+        private_target_id = sender_user_id
+        if message_type == "private" and sender_user_id == self_id:
+            private_target_id = str(detail.get("target_id") or "").strip()
+            if not private_target_id:
+                raise ValueError("NapCat 自发私聊消息详情缺少目标用户 ID，无法确定聊天归属")
+
+        message = await runtime.inbound_codec.build_message_dict(detail, self_id, sender_user_id, sender)
+        if message_type == "private":
+            message["message_info"]["additional_config"]["platform_io_target_user_id"] = private_target_id
+        return message
 
     async def on_unload(self) -> None:
         """在插件卸载时关闭连接。"""

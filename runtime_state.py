@@ -46,6 +46,11 @@ class NapCatRuntimeStateManager:
         self._reported_account_id: Optional[str] = None
         self._reported_scope: Optional[str] = None
 
+    @property
+    def account_id(self) -> str:
+        """返回已向 Host 确认的当前连接账号，断开连接时为空。"""
+        return self._reported_account_id or ""
+
     async def report_connected(self, account_id: str, server_config: NapCatServerConfig) -> bool:
         """向 Host 上报当前消息网关连接已就绪。
 

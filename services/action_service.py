@@ -19,6 +19,15 @@ if TYPE_CHECKING:
     from ..transport import NapCatTransportClient
 
 
+class NapCatActionError(RuntimeError):
+    """平台明确返回的动作错误，与连接和传输错误区分。"""
+
+    def __init__(self, action_name: str, wording: str) -> None:
+        self.action_name = action_name
+        self.wording = wording
+        super().__init__(f"NapCat 动作返回失败: action={action_name} message={wording}")
+
+
 class NapCatActionService:
     """NapCat 底层动作与资源访问服务。"""
 
@@ -55,7 +64,7 @@ class NapCatActionService:
 
         if str(response.get("status") or "").lower() != "ok":
             error_message = str(response.get("wording") or response.get("message") or "unknown")
-            raise RuntimeError(f"NapCat 动作返回失败: action={action_name} message={error_message}")
+            raise NapCatActionError(action_name, error_message)
         return response
 
     async def call_action_data(self, action_name: str, params: Mapping[str, Any]) -> Any:
